@@ -15,6 +15,90 @@ import bpy
 import subprocess
 import os
 
+######### CRYPTOMATTE HASH #############################################################
+
+# from numpy import int32
+# import struct
+
+
+# def unpack_int32_to_float(bits):
+#     return struct.unpack(">f", struct.pack(">i", bits))[0]
+
+
+# def murmur_hash3(key, seed=0):
+#     """ Implements 32bit murmur3 hash. """
+#     key = bytearray(key.encode())
+
+#     def fmix(h):
+#         h ^= h >> 16
+#         h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+#         h ^= h >> 13
+#         h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+#         h ^= h >> 16
+#         return h
+
+#     length = len(key)
+#     nblocks = int(length / 4)
+#     h1 = seed
+#     c1 = 0xCC9E2D51
+#     c2 = 0x1B873593
+#     # body
+#     for block_start in range(0, nblocks * 4, 4):
+#         # ??? big endian?
+#         k1 = (
+#             key[block_start + 3] << 24
+#             | key[block_start + 2] << 16
+#             | key[block_start + 1] << 8
+#             | key[block_start + 0]
+#         )
+#         k1 = (c1 * k1) & 0xFFFFFFFF
+#         k1 = (k1 << 15 | k1 >> 17) & 0xFFFFFFFF  # inlined ROTL32
+#         k1 = (c2 * k1) & 0xFFFFFFFF
+#         h1 ^= k1
+#         h1 = (h1 << 13 | h1 >> 19) & 0xFFFFFFFF  # inlined ROTL32
+#         h1 = (h1 * 5 + 0xE6546B64) & 0xFFFFFFFF
+#     # tail
+#     tail_index = nblocks * 4
+#     k1 = 0
+#     tail_size = length & 3
+#     if tail_size >= 3:
+#         k1 ^= key[tail_index + 2] << 16
+#     if tail_size >= 2:
+#         k1 ^= key[tail_index + 1] << 8
+#     if tail_size >= 1:
+#         k1 ^= key[tail_index + 0]
+#     if tail_size > 0:
+#         k1 = (k1 * c1) & 0xFFFFFFFF
+#         k1 = (k1 << 15 | k1 >> 17) & 0xFFFFFFFF  # inlined ROTL32
+#         k1 = (k1 * c2) & 0xFFFFFFFF
+#         h1 ^= k1
+#     # finalization
+#     unsigned_val = fmix(h1 ^ length)
+#     if unsigned_val & 0x80000000 == 0:
+#         return unsigned_val
+#     else:
+#         return -((unsigned_val ^ 0xFFFFFFFF) + 1)
+
+
+# def hash_to_float(hash_):
+#     hash_ = int32(hash_)
+#     mantissa = hash_ & ((int32(1) << int32(23)) - int32(1))
+#     exponent = (hash_ >> int32(23)) & ((int32(1) << int32(8)) - int32(1))
+#     exponent = max(exponent, int32(1))
+#     exponent = min(exponent, int32(254))
+#     exponent = exponent << int32(23)
+#     sign = hash_ >> int32(31)
+#     sign = sign << int32(31)
+#     float_bits = sign | exponent | mantissa
+#     return unpack_int32_to_float(float_bits)
+
+
+# def get_matte_id(name):
+#     return hash_to_float(murmur_hash3(name))
+
+
+#################################################################################################
+
 bpy.types.Scene.exr_auto_pass_saver_clear_all = bpy.props.BoolProperty(
     name="Clear all nodes",
     description="Remove all nodes from the Compositor and add only RenderLayer <-> Saver Node",
@@ -93,6 +177,7 @@ class Exr_Auto_Pass_Saver(bpy.types.Operator):
 
             node = bpy.context.scene.node_tree.nodes.new("CompositorNodeOutputFile")
             node.label = "EXR-MultiLayer"
+            node.name = "EXR-MultiLayer"
             node.base_path = self.GetOutputPathStr()
             node.location = position
             node.width = 300
@@ -109,6 +194,7 @@ class Exr_Auto_Pass_Saver(bpy.types.Operator):
 
         node = bpy.context.scene.node_tree.nodes.new("CompositorNodeOutputFile")
         node.label = "EXRs"
+        node.name = "EXRs"
         node.base_path = self.GetOutputPathStr()
         node.location = position
         node.width = 300
@@ -125,12 +211,102 @@ class Exr_Auto_Pass_Saver(bpy.types.Operator):
             if out.enabled == False:
                 continue
 
+            if bpy.context.scene.single_files and out.identifier.startswith(
+                "CryptoObject"
+            ):
+                try:
+                    crypto_object_node = bpy.context.scene.node_tree.nodes[
+                        "CryptoObject"
+                    ]
+
+                except:
+                    crypto_object_node = bpy.context.scene.node_tree.nodes.new(
+                        "CompositorNodeOutputFile"
+                    )
+                    crypto_object_node.file_slots.clear()
+                    crypto_object_node.label = "CryptoObject"
+                    crypto_object_node.name = "CryptoObject"
+                    crypto_object_node.format.file_format = "OPEN_EXR_MULTILAYER"
+                    crypto_object_node.base_path = (
+                        self.GetOutputPathStr() + "/CryptoObject"
+                    )
+                    crypto_object_node.location = (400, -193)
+                    crypto_object_node.width = 300
+                    crypto_object_node.width_hidden = 300
+                    crypto_object_node.use_custom_color = True
+                    crypto_object_node.color = (1.0, 0.5, 0.0)
+
+                crypto_object_node.file_slots.new(out.identifier)
+                bpy.context.scene.node_tree.links.new(
+                    sourceNode.outputs[out.identifier],
+                    crypto_object_node.inputs[out.identifier],
+                )
+            if bpy.context.scene.single_files and out.identifier.startswith(
+                "CryptoMaterial"
+            ):
+                try:
+                    crypto_material_node = bpy.context.scene.node_tree.nodes[
+                        "CryptoMaterial"
+                    ]
+
+                except:
+                    crypto_material_node = bpy.context.scene.node_tree.nodes.new(
+                        "CompositorNodeOutputFile"
+                    )
+                    crypto_material_node.file_slots.clear()
+                    crypto_material_node.label = "CryptoMaterial"
+                    crypto_material_node.name = "CryptoMaterial"
+                    crypto_material_node.format.file_format = "OPEN_EXR_MULTILAYER"
+                    crypto_material_node.base_path = (
+                        self.GetOutputPathStr() + "/CryptoMaterial"
+                    )
+                    crypto_material_node.location = (400, -393)
+                    crypto_material_node.width = 300
+                    crypto_material_node.width_hidden = 300
+                    crypto_material_node.use_custom_color = True
+                    crypto_material_node.color = (0.0, 0.5, 0.8)
+
+                crypto_material_node.file_slots.new(out.identifier)
+                bpy.context.scene.node_tree.links.new(
+                    sourceNode.outputs[out.identifier],
+                    crypto_material_node.inputs[out.identifier],
+                )
+
+            if bpy.context.scene.single_files and out.identifier.startswith(
+                "CryptoAsset"
+            ):
+                try:
+                    crypto_asset_node = bpy.context.scene.node_tree.nodes["CryptoAsset"]
+
+                except:
+                    crypto_asset_node = bpy.context.scene.node_tree.nodes.new(
+                        "CompositorNodeOutputFile"
+                    )
+                    crypto_asset_node.file_slots.clear()
+                    crypto_asset_node.label = "CryptoAsset"
+                    crypto_asset_node.name = "CryptoAsset"
+                    crypto_asset_node.format.file_format = "OPEN_EXR_MULTILAYER"
+                    crypto_asset_node.base_path = (
+                        self.GetOutputPathStr() + "/CryptoAsset"
+                    )
+                    crypto_asset_node.location = (400, -593)
+                    crypto_asset_node.width = 300
+                    crypto_asset_node.width_hidden = 300
+                    crypto_asset_node.use_custom_color = True
+                    crypto_asset_node.color = (0.0, 0.5, 0.1)
+
+                crypto_asset_node.file_slots.new(out.identifier)
+                bpy.context.scene.node_tree.links.new(
+                    sourceNode.outputs[out.identifier],
+                    crypto_asset_node.inputs[out.identifier],
+                )
+
             # Combine OIDN Denoising Data to a single denoised pass
             if out.identifier.startswith("Denoising"):
                 denoise_node = bpy.context.scene.node_tree.nodes.new(
                     "CompositorNodeDenoise"
                 )
-                denoise_node.location = (450, 200)
+                denoise_node.location = (400, 580)
                 bpy.context.scene.node_tree.links.new(
                     sourceNode.outputs["Image"], denoise_node.inputs["Image"]
                 )
@@ -142,10 +318,10 @@ class Exr_Auto_Pass_Saver(bpy.types.Operator):
                     sourceNode.outputs["Denoising Albedo"],
                     denoise_node.inputs["Albedo"],
                 )
-                targetNode.file_slots.new("Denoised_Image.")
+                targetNode.file_slots.new("Denoised_Image")
                 bpy.context.scene.node_tree.links.new(
                     denoise_node.outputs["Image"],
-                    targetNode.inputs["Denoised_Image."],
+                    targetNode.inputs["Denoised_Image"],
                 )
                 bpy.context.scene.render.image_settings.file_format
                 return
@@ -159,9 +335,18 @@ class Exr_Auto_Pass_Saver(bpy.types.Operator):
                     bpy.context.scene.node_tree.links.new(out, targetNode.inputs[slot])
                     break
                 slot = slot + 1
-            if not found:
+            if (
+                bpy.context.scene.single_files
+                and not found
+                and not out.identifier.startswith("Crypto")
+                and not out.identifier.startswith("Noisy")
+            ) or (
+                not found
+                and not bpy.context.scene.single_files
+                and not out.identifier.startswith("Noisy")
+            ):
                 # target node has no matching input, create one and link to it
-                targetNode.file_slots.new(out.identifier.replace(" ", "_") + ".")
+                targetNode.file_slots.new(out.identifier.replace(" ", "_"))
                 bpy.context.scene.node_tree.links.new(out, targetNode.inputs[-1])
 
     # Exr Auto Saver button
